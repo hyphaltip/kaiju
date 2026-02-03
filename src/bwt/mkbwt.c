@@ -22,6 +22,29 @@
   The BWT is output in the same alphabet as the sequence, but contains
   termination characters
 
+  MEMORY OPTIMIZATION
+  ===================
+  
+  This implementation uses several strategies to reduce memory usage for large databases:
+  
+  1. Lazy bucket allocation: Suffix arrays for buckets are allocated only when needed,
+     not all at once.
+  
+  2. Immediate deallocation: Suffix arrays are freed immediately after SA checkpoints
+     are written, before BWT writing occurs. Word strings and BWT buffers are also
+     freed immediately after use.
+  
+  3. Controlled bucket filling: Only a limited number of buckets are filled at once
+     (controlled by nfill parameter), preventing excessive memory usage.
+     - Normal mode: nfill = min(nbuckets/20 + nThreads, 100)
+     - Memory-efficient mode (-m flag): nfill = 2 * nThreads
+  
+  4. BWT buffer reuse: Each bucket's BWT buffer is allocated, used, and freed
+     independently, avoiding large contiguous memory allocations.
+  
+  For very large databases (hundreds of GB), use the -m (memory-efficient) flag to
+  minimize peak memory usage at the cost of more passes over the sequence data.
+  This can reduce peak memory usage by an order of magnitude.
 
 gcc -g -o sufSort -l pthread sufSort.c
 
@@ -76,6 +99,11 @@ gcc -g -o sufSort -l pthread sufSort.c
 
 /* Global var for setting of number for worker */
 int workerNum=0;
+
+
+/* Memory optimization constants */
+#define BYTES_PER_MB 1e6
+#define MAX_NFILL_NORMAL_MODE 100  /* Maximum concurrent buckets in normal mode */
 
 
 /* Status flags */
@@ -310,6 +338,26 @@ BucketStack *initBucketStack(int alen, char *alphabet, long slen, char *seq, FIL
   pthread_mutex_init(&(bs->lock), NULL);
   pthread_mutex_init(&(bs->lock_fill), NULL);
 
+  /* Calculate and report estimated peak memory usage */
+  {
+    long max_bucket_size = 0;
+    long total_suffix_ptrs = 0;
+    for (i=0; i<bs->nbuckets; ++i) {
+      if (bs->bucket_size[i] > max_bucket_size) max_bucket_size = bs->bucket_size[i];
+      total_suffix_ptrs += bs->bucket_size[i];
+    }
+    /* Estimate peak memory based on nfill parameter (set later) */
+    /* For now just report the size of data structures */
+    long seq_mem = slen * sizeof(char);  /* Sequence data */
+    long ptr_size = sizeof(char *);       /* Size of pointer */
+    fprintf(stderr,"Memory usage estimates:\n");
+    fprintf(stderr,"  Sequence data: %.1f MB\n", seq_mem/BYTES_PER_MB);
+    fprintf(stderr,"  Largest bucket: %ld suffixes (%.1f MB for suffix array)\n", 
+            max_bucket_size, max_bucket_size*ptr_size/BYTES_PER_MB);
+    fprintf(stderr,"  Total suffixes: %ld (%.1f MB if all loaded)\n",
+            total_suffix_ptrs, total_suffix_ptrs*ptr_size/BYTES_PER_MB);
+  }
+
   return bs;
 }
 
@@ -348,8 +396,14 @@ void fillBuckets(BucketStack *bs, int istart, int m) {
 
   /* alloc buckets  */
   for (i=istart; i<iend; ++i) {
-    if (bucket[i]->len)
+    if (bucket[i]->len) {
       bucket[i]->sa = bucket[i]->cur = (char **)malloc(bucket[i]->len*sizeof(char *));
+      if (!bucket[i]->sa) {
+        fprintf(stderr, "fillBuckets: Failed to allocate suffix array for bucket %d (size=%ld)\n",
+                i, bucket[i]->len);
+        exit(1);
+      }
+    }
     else bucket[i]->sa = bucket[i]->cur = NULL;
   }
 
@@ -503,12 +557,16 @@ void sortBucket(Bucket *b) {
 
 
 
-/* Get the BWT for bucket */
+/* Get the BWT for bucket (stores in bucket temporarily) */
 void bwtBucket(Bucket *b) {
   int k;
 
   if (b->len) {
     b->bwt = malloc(b->len);
+    if (!b->bwt) {
+      fprintf(stderr, "Failed to allocate BWT buffer of size %ld\n", b->len);
+      exit(1);
+    }
     for (k=0; k<b->len; ++k) b->bwt[k]=*(b->sa[k]-1);
   }
   b->status = BWT;
@@ -527,28 +585,38 @@ static inline void free_sa(Bucket *b) {
 
 
 
-
+/* Write BWT and free all bucket resources immediately to save memory */
 void bwtWriteBucket(Bucket *b, FILE *bwtfile) {
-  int k;
-
 #ifdef DEBUG2
-  if (b->len) {
+  if (b->len && b->sa) {
     int i;
     for (i=0; i<b->len; ++i) {
       fprintf(stdout,"DEBUG2%8d %4d ", (int)(b->sa[i]-b->seq), b->wn );
       print_seq(b->seq, b->sa[i], 0, b->slen, DEBUG2, b->alphabet, b->alen, stdout);
     }
   }
-  free(b->sa);
-  b->sa=NULL;
 #endif
-  if (b->len) {
+  
+  if (b->len && b->bwt) {
     // Write actual bwt
     fwrite(b->bwt,sizeof(char),b->len, bwtfile);
-    // Free BWT
+    // Free BWT immediately to reduce memory usage
     free(b->bwt);
     b->bwt=NULL;
   }
+  
+  // Free SA if still allocated (should have been freed earlier)
+  if (b->sa) {
+    free(b->sa);
+    b->sa=NULL;
+  }
+  
+  // Free word string to save memory
+  if (b->word) {
+    free(b->word);
+    b->word=NULL;
+  }
+  
   b->status = DONE;
 }
 
@@ -1030,8 +1098,21 @@ int main(int argc, char **argv) {
 
   DEBUG1LINE(fprintf(stderr,"Bucket stack initiated\n"));
 
-  /* Number of buckets to fill. Ad hoc at the moment... */
-  wbs->nfill = wbs->nbuckets/20+nThreads;
+  /* Number of buckets to fill. Ad hoc at the moment... 
+   * For memory-efficient mode, use smaller batches to reduce peak memory usage.
+   * For normal mode, use larger batches for better performance.
+   */
+  if (memEfficient) {
+    /* In memory-efficient mode, limit to 2*nThreads to minimize memory footprint */
+    wbs->nfill = 2 * nThreads;
+    fprintf(stderr,"Memory-efficient mode: filling %d buckets at a time\n", wbs->nfill);
+  } else {
+    /* Normal mode: balance between memory usage and performance */
+    wbs->nfill = wbs->nbuckets/20 + nThreads;
+    /* Cap at a reasonable maximum to avoid excessive memory usage */
+    if (wbs->nfill > MAX_NFILL_NORMAL_MODE) wbs->nfill = MAX_NFILL_NORMAL_MODE;
+  }
+  fprintf(stderr,"NBUCKETS=%d NFILL=%d\n", wbs->nbuckets, wbs->nfill);
 
   /* Start nThreads-1 to begin with */
   pthread_t *worker = (pthread_t *)malloc(nThreads*sizeof(pthread_t));
