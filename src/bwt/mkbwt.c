@@ -101,6 +101,11 @@ gcc -g -o sufSort -l pthread sufSort.c
 int workerNum=0;
 
 
+/* Memory optimization constants */
+#define BYTES_PER_MB 1e6
+#define MAX_NFILL_NORMAL_MODE 100  /* Maximum concurrent buckets in normal mode */
+
+
 /* Status flags */
 #define UNINIT 0
 #define FILLED 1
@@ -346,11 +351,11 @@ BucketStack *initBucketStack(int alen, char *alphabet, long slen, char *seq, FIL
     long seq_mem = slen * sizeof(char);  /* Sequence data */
     long ptr_size = sizeof(char *);       /* Size of pointer */
     fprintf(stderr,"Memory usage estimates:\n");
-    fprintf(stderr,"  Sequence data: %.1f MB\n", seq_mem/1e6);
+    fprintf(stderr,"  Sequence data: %.1f MB\n", seq_mem/BYTES_PER_MB);
     fprintf(stderr,"  Largest bucket: %ld suffixes (%.1f MB for suffix array)\n", 
-            max_bucket_size, max_bucket_size*ptr_size/1e6);
+            max_bucket_size, max_bucket_size*ptr_size/BYTES_PER_MB);
     fprintf(stderr,"  Total suffixes: %ld (%.1f MB if all loaded)\n",
-            total_suffix_ptrs, total_suffix_ptrs*ptr_size/1e6);
+            total_suffix_ptrs, total_suffix_ptrs*ptr_size/BYTES_PER_MB);
   }
 
   return bs;
@@ -1105,7 +1110,7 @@ int main(int argc, char **argv) {
     /* Normal mode: balance between memory usage and performance */
     wbs->nfill = wbs->nbuckets/20 + nThreads;
     /* Cap at a reasonable maximum to avoid excessive memory usage */
-    if (wbs->nfill > 100) wbs->nfill = 100;
+    if (wbs->nfill > MAX_NFILL_NORMAL_MODE) wbs->nfill = MAX_NFILL_NORMAL_MODE;
   }
   fprintf(stderr,"NBUCKETS=%d NFILL=%d\n", wbs->nbuckets, wbs->nfill);
 
