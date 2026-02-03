@@ -15,11 +15,23 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdint.h>
+#include <limits.h>
 
 #include "sequence.h"
 // #include "bwt.h"
 #include "suffixArray.h"
 
+
+/*
+ * Check for multiplication overflow when computing allocation size
+ * Returns 1 if overflow would occur, 0 if safe
+ */
+static inline int check_mult_overflow(size_t count, size_t size) {
+  if (count == 0 || size == 0) return 0;
+  if (count > SIZE_MAX / size) return 1;
+  return 0;
+}
 
 
 /***********************************************
@@ -316,7 +328,25 @@ suffixArray *read_suffixArray_header(FILE *fp) {
 
 /* Read SA  */
 void read_suffixArray_body(suffixArray *s, FILE *fp) {
-  s->sa = (uchar *)malloc(s->ncheck*s->nbytes*sizeof(uchar));
+  size_t alloc_size;
+  
+  /* Check for overflow in size calculation */
+  if (check_mult_overflow(s->ncheck, s->nbytes)) {
+    fprintf(stderr, "read_suffixArray_body: Overflow when calculating SA allocation size\n");
+    fprintf(stderr, "  ncheck=%ld, nbytes=%d\n", s->ncheck, s->nbytes);
+    exit(1);
+  }
+  
+  alloc_size = s->ncheck * s->nbytes * sizeof(uchar);
+  
+  s->sa = (uchar *)malloc(alloc_size);
+  if (!s->sa) {
+    fprintf(stderr, "read_suffixArray_body: Failed to allocate SA array\n");
+    fprintf(stderr, "  Required memory: %zu bytes (%.2f MB)\n", 
+            alloc_size, (double)alloc_size / (1024.0 * 1024.0));
+    exit(1);
+  }
+  
   fread(s->sa,sizeof(uchar),s->ncheck*s->nbytes,fp);
 }
 
