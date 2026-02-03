@@ -4,11 +4,13 @@
 #define COMMON_h
 
 #include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 typedef unsigned char uchar;
 typedef unsigned short int ushort;
 typedef unsigned int uint;
-typedef long int IndexType;
+typedef int64_t IndexType;
 
 static void ERROR(char *text, int errornum) {
   fprintf(stderr,"%s\n",text);

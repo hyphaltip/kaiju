@@ -141,7 +141,7 @@ static FMI *makeIndex_common(uchar *bwt, long bwtlen, int alen) {
     // a = sbwt[i];
     a = bwt[ii];
     if (a<0 || a>=alen) {
-      fprintf(stderr,"makeIndex_common: letter %d not in range at %ld, alen=%d\n",a,ii,alen);
+      fprintf(stderr,"makeIndex_common: letter %d not in range at %" PRId64 ", alen=%d\n",a,ii,alen);
       exit(199);
     }
     total[a] += 1;

@@ -333,7 +333,7 @@ void read_suffixArray_body(suffixArray *s, FILE *fp) {
   /* Check for overflow in size calculation */
   if (check_mult_overflow(s->ncheck, s->nbytes)) {
     fprintf(stderr, "read_suffixArray_body: Overflow when calculating SA allocation size\n");
-    fprintf(stderr, "  ncheck=%ld, nbytes=%d\n", s->ncheck, s->nbytes);
+    fprintf(stderr, "  ncheck=%" PRId64 ", nbytes=%d\n", s->ncheck, s->nbytes);
     exit(1);
   }
   
