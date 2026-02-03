@@ -46,7 +46,7 @@ int main (int argc, char **argv) {
   b = read_BWT(fp);
   fclose(fp);
   fprintf(stderr,"DONE\n");
-  fprintf(stderr,"BWT of length %ld has been read with %d sequencs, alphabet=%s\n",
+  fprintf(stderr,"BWT of length %" PRId64 " has been read with %d sequences, alphabet=%s\n",
 	  b->len, b->nseq, b->alphabet); 
 
   /* Read SA */
