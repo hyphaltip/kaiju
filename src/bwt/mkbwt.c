@@ -31,13 +31,20 @@
      not all at once.
   
   2. Immediate deallocation: Suffix arrays are freed immediately after SA checkpoints
-     are written, before BWT writing occurs.
+     are written, before BWT writing occurs. Word strings and BWT buffers are also
+     freed immediately after use.
   
   3. Controlled bucket filling: Only a limited number of buckets are filled at once
      (controlled by nfill parameter), preventing excessive memory usage.
+     - Normal mode: nfill = min(nbuckets/20 + nThreads, 100)
+     - Memory-efficient mode (-m flag): nfill = 2 * nThreads
   
   4. BWT buffer reuse: Each bucket's BWT buffer is allocated, used, and freed
      independently, avoiding large contiguous memory allocations.
+  
+  For very large databases (hundreds of GB), use the -m (memory-efficient) flag to
+  minimize peak memory usage at the cost of more passes over the sequence data.
+  This can reduce peak memory usage by an order of magnitude.
 
 gcc -g -o sufSort -l pthread sufSort.c
 
@@ -326,6 +333,26 @@ BucketStack *initBucketStack(int alen, char *alphabet, long slen, char *seq, FIL
   pthread_mutex_init(&(bs->lock), NULL);
   pthread_mutex_init(&(bs->lock_fill), NULL);
 
+  /* Calculate and report estimated peak memory usage */
+  {
+    long max_bucket_size = 0;
+    long total_suffix_ptrs = 0;
+    for (i=0; i<bs->nbuckets; ++i) {
+      if (bs->bucket_size[i] > max_bucket_size) max_bucket_size = bs->bucket_size[i];
+      total_suffix_ptrs += bs->bucket_size[i];
+    }
+    /* Estimate peak memory based on nfill parameter (set later) */
+    /* For now just report the size of data structures */
+    long seq_mem = slen * sizeof(char);  /* Sequence data */
+    long ptr_size = sizeof(char *);       /* Size of pointer */
+    fprintf(stderr,"Memory usage estimates:\n");
+    fprintf(stderr,"  Sequence data: %.1f MB\n", seq_mem/1e6);
+    fprintf(stderr,"  Largest bucket: %ld suffixes (%.1f MB for suffix array)\n", 
+            max_bucket_size, max_bucket_size*ptr_size/1e6);
+    fprintf(stderr,"  Total suffixes: %ld (%.1f MB if all loaded)\n",
+            total_suffix_ptrs, total_suffix_ptrs*ptr_size/1e6);
+  }
+
   return bs;
 }
 
@@ -364,8 +391,14 @@ void fillBuckets(BucketStack *bs, int istart, int m) {
 
   /* alloc buckets  */
   for (i=istart; i<iend; ++i) {
-    if (bucket[i]->len)
+    if (bucket[i]->len) {
       bucket[i]->sa = bucket[i]->cur = (char **)malloc(bucket[i]->len*sizeof(char *));
+      if (!bucket[i]->sa) {
+        fprintf(stderr, "fillBuckets: Failed to allocate suffix array for bucket %d (size=%ld)\n",
+                i, bucket[i]->len);
+        exit(1);
+      }
+    }
     else bucket[i]->sa = bucket[i]->cur = NULL;
   }
 
