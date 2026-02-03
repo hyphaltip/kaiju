@@ -251,10 +251,12 @@ static int count_term=0;
 static char* term = "*";
 static int count_revsort=0;
 static int revsort = 0;
+static int count_memEfficient=0;
+static int memEfficient = 0;
 static int count_help=0;
 static int help = 0;
 
-static OPT_STRUCT opt_struct[13] = {
+static OPT_STRUCT opt_struct[14] = {
 	{OPTTYPE_SWITCH,VARTYPE_int,NULL,NULL,NULL,"---\nmkbwt takes a fasta file as argument and calculates the BWT.\nOutput file name given with -o (defaults to the input file name)\n\nExample cmd line\n   mkbwt -a DNA -o outputname infilename.fsa\nor for proteins (default alphabet)\n   mkbwt -o outputname infilename.fsa\nor for some other alphabet\n   mkbwt -a abcdefgHIJK -o outputname infilename.fsa\n\nIt can also take sequences on stdin, in which case you have to give\nthe filesize in millions of letters (rounded up), e.g. -l 3000\ncorresponding to 3 billion letters.\n\nFiles are created with outputname followed by various extensions\n\nSee options below\n---\n"},
 	{OPTTYPE_ARG,VARTYPE_charS,(void *)&infilename,&count_infilename,"|infilename|","      Name of an input file (stdin if no file is given, in which case you\n      need to give length)"},
 	{OPTTYPE_VALUE,VARTYPE_charS,(void *)&outfilename,&count_outfilename,"|outfilename|o|","      Name of output. Several files with different extensions are produced\n      (if not given, input file name is used)."},
@@ -266,6 +268,7 @@ static OPT_STRUCT opt_struct[13] = {
 	{OPTTYPE_SWITCH,VARTYPE_int,(void *)&revComp,&count_revComp,"|revComp|r|","      Reverse complement sequence. Works only for DNA."},
 	{OPTTYPE_VALUE,VARTYPE_charS,(void *)&term,&count_term,"|term|t|","      Terminating symbol (only used for debugging)"},
 	{OPTTYPE_SWITCH,VARTYPE_int,(void *)&revsort,&count_revsort,"|revsort|s|","      The termination symbols sorts as reverse sequences. This will make the\n      BWT more compressible."},
+	{OPTTYPE_SWITCH,VARTYPE_int,(void *)&memEfficient,&count_memEfficient,"|memEfficient|m|","      Memory-efficient mode for very large databases. Reduces the number of\n      buckets held in memory simultaneously at the cost of more passes over\n      the sequence data."},
 	{OPTTYPE_SWITCH,VARTYPE_int,(void *)&help,(void *)&count_help,"|help|h|","      Prints summary of options and arguments"},
 	{0,0,NULL,NULL,NULL,NULL}
 };
