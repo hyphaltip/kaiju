@@ -27,7 +27,7 @@
  * Check for multiplication overflow when computing allocation size
  * Returns 1 if overflow would occur, 0 if safe
  */
-static inline int check_mult_overflow_sa(size_t count, size_t size) {
+static inline int check_mult_overflow(size_t count, size_t size) {
   if (count == 0 || size == 0) return 0;
   if (count > SIZE_MAX / size) return 1;
   return 0;
@@ -331,7 +331,7 @@ void read_suffixArray_body(suffixArray *s, FILE *fp) {
   size_t alloc_size;
   
   /* Check for overflow in size calculation */
-  if (check_mult_overflow_sa(s->ncheck, s->nbytes)) {
+  if (check_mult_overflow(s->ncheck, s->nbytes)) {
     fprintf(stderr, "read_suffixArray_body: Overflow when calculating SA allocation size\n");
     fprintf(stderr, "  ncheck=%ld, nbytes=%d\n", s->ncheck, s->nbytes);
     exit(1);

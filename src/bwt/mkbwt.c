@@ -460,7 +460,7 @@ void fillBuckets(BucketStack *bs, int istart, int m) {
       if (check_mult_overflow(bucket[i]->len, sizeof(char *))) {
         fprintf(stderr, "fillBuckets: Overflow detected when calculating allocation size for bucket %d\n", i);
         fprintf(stderr, "  Bucket size: %ld, pointer size: %zu\n", bucket[i]->len, sizeof(char *));
-        fprintf(stderr, "  Required memory: would overflow size_t (max=%zu)\n", SIZE_MAX);
+        fprintf(stderr, "  Required memory exceeds maximum addressable size (SIZE_MAX=%zu)\n", SIZE_MAX);
         fprintf(stderr, "\nSuggestion: Try using -m flag for memory-efficient mode\n");
         exit(1);
       }
@@ -842,11 +842,20 @@ static void SortSeqs(SEQstruct *ss, suffixArray *s) {
   SEQstruct **ssarray, *cur;
 
   /* Check for overflow before allocation */
-  if (check_mult_overflow(nseq, sizeof(SEQstruct*)) ||
-      check_mult_overflow(nseq, sizeof(char*)) ||
-      check_mult_overflow(nseq, sizeof(IndexType)) ||
-      check_mult_overflow(nseq, sizeof(int))) {
-    fprintf(stderr, "SortSeqs: Overflow detected when calculating allocation sizes for nseq=%d\n", nseq);
+  if (check_mult_overflow(nseq, sizeof(SEQstruct*))) {
+    fprintf(stderr, "SortSeqs: Overflow when calculating ssarray allocation size for nseq=%d\n", nseq);
+    exit(1);
+  }
+  if (check_mult_overflow(nseq, sizeof(char*))) {
+    fprintf(stderr, "SortSeqs: Overflow when calculating ids array allocation size for nseq=%d\n", nseq);
+    exit(1);
+  }
+  if (check_mult_overflow(nseq, sizeof(IndexType))) {
+    fprintf(stderr, "SortSeqs: Overflow when calculating seqlengths array allocation size for nseq=%d\n", nseq);
+    exit(1);
+  }
+  if (check_mult_overflow(nseq, sizeof(int))) {
+    fprintf(stderr, "SortSeqs: Overflow when calculating seqTermOrder array allocation size for nseq=%d\n", nseq);
     exit(1);
   }
 
