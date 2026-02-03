@@ -87,6 +87,8 @@ gcc -g -o sufSort -l pthread sufSort.c
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <stdint.h>
+#include <limits.h>
 
 #include "multikeyqsort.h"
 #include "common.h"
@@ -226,6 +228,16 @@ static void fill_powers(int l, int al) {
 
 
 /*
+ * Check for multiplication overflow when computing allocation size
+ * Returns 1 if overflow would occur, 0 if safe
+ */
+static inline int check_mult_overflow(size_t count, size_t size) {
+  if (count == 0 || size == 0) return 0;
+  if (count > SIZE_MAX / size) return 1;
+  return 0;
+}
+
+/*
    *w must point to allocated space
    If alphabet is not given, letters are encoded as numbers from 0 to alen-1
    word is terminated by 0
@@ -245,10 +257,21 @@ Bucket *allocBucket(long slen, char *seq, int wlen, int wn, int alen,
   int i;
   Bucket *bucket = (Bucket *)malloc(sizeof(Bucket));
 
+  if (!bucket) {
+    fprintf(stderr, "allocBucket: Failed to allocate Bucket structure for bucket %d\n", wn);
+    return NULL;
+  }
+
   bucket->wlen=wlen;
   bucket->start = sa_start;
   bucket->wn = wn;
   bucket->word = (char *)malloc(wlen*sizeof(char)+1);
+  if (!bucket->word) {
+    fprintf(stderr, "allocBucket: Failed to allocate word buffer for bucket %d\n", wn);
+    free(bucket);
+    return NULL;
+  }
+  
   number2word(wn,alen,bucket->word,wlen,alphabet);
   bucket->len=bucket_size;
   bucket->sa=NULL;
@@ -290,7 +313,20 @@ long *bucketSizes(char *seq, long len, int alen, int n, int *nbuckets) {
   }
   *nbuckets=l;
 
+  /* Check for overflow before allocation */
+  if (check_mult_overflow(l, sizeof(long))) {
+    fprintf(stderr, "bucketSizes: Overflow when calculating bucket array allocation size\n");
+    fprintf(stderr, "  Number of buckets: %d, size per bucket: %zu\n", l, sizeof(long));
+    exit(1);
+  }
+
   b=(long *)calloc(l,sizeof(long));
+  if (!b) {
+    fprintf(stderr, "bucketSizes: Failed to allocate bucket size array\n");
+    fprintf(stderr, "  Number of buckets: %d, required memory: %zu bytes (%.2f MB)\n", 
+            l, l * sizeof(long), (double)(l * sizeof(long)) / (1024.0 * 1024.0));
+    exit(1);
+  }
 
   end = seq+len-1;
   while (seq<end) {
@@ -309,6 +345,11 @@ BucketStack *initBucketStack(int alen, char *alphabet, long slen, char *seq, FIL
   IndexType sa_pos=0;
   BucketStack *bs=(BucketStack *)malloc(sizeof(BucketStack));
 
+  if (!bs) {
+    fprintf(stderr, "initBucketStack: Failed to allocate BucketStack\n");
+    exit(1);
+  }
+
   bs->alen = alen;
   bs->alphabet = alphabet;
   bs->slen = slen;
@@ -321,12 +362,30 @@ BucketStack *initBucketStack(int alen, char *alphabet, long slen, char *seq, FIL
   /* Calculate bucket sizes */
   bs->bucket_size = bucketSizes(seq, slen, alen, wlen, &(bs->nbuckets));
 
+  /* Check for overflow before allocating bucket array */
+  if (check_mult_overflow(bs->nbuckets, sizeof(Bucket *))) {
+    fprintf(stderr, "initBucketStack: Overflow when calculating bucket array allocation size\n");
+    fprintf(stderr, "  Number of buckets: %d, pointer size: %zu\n", bs->nbuckets, sizeof(Bucket *));
+    exit(1);
+  }
+
   /* Allocate buckets */
   bs->b = (Bucket **)calloc(bs->nbuckets,sizeof(Bucket *));
+  if (!bs->b) {
+    fprintf(stderr, "initBucketStack: Failed to allocate bucket pointer array\n");
+    fprintf(stderr, "  Number of buckets: %d, required memory: %zu bytes (%.2f MB)\n",
+            bs->nbuckets, bs->nbuckets * sizeof(Bucket *),
+            (double)(bs->nbuckets * sizeof(Bucket *)) / (1024.0 * 1024.0));
+    exit(1);
+  }
 
   fill_powers(wlen, alen);
   for (i=0; i<bs->nbuckets; ++i) {
     bs->b[i] = allocBucket(slen, seq, wlen, i, alen, alphabet, bs->bucket_size[i], sa_pos);
+    if (!bs->b[i]) {
+      fprintf(stderr, "initBucketStack: Failed to allocate bucket %d\n", i);
+      exit(1);
+    }
     sa_pos += bs->bucket_size[i];
   }
 
@@ -397,10 +456,23 @@ void fillBuckets(BucketStack *bs, int istart, int m) {
   /* alloc buckets  */
   for (i=istart; i<iend; ++i) {
     if (bucket[i]->len) {
+      /* Check for overflow before allocation */
+      if (check_mult_overflow(bucket[i]->len, sizeof(char *))) {
+        fprintf(stderr, "fillBuckets: Overflow detected when calculating allocation size for bucket %d\n", i);
+        fprintf(stderr, "  Bucket size: %ld, pointer size: %zu\n", bucket[i]->len, sizeof(char *));
+        fprintf(stderr, "  Required memory: would overflow size_t (max=%zu)\n", SIZE_MAX);
+        fprintf(stderr, "\nSuggestion: Try using -m flag for memory-efficient mode\n");
+        exit(1);
+      }
+      
       bucket[i]->sa = bucket[i]->cur = (char **)malloc(bucket[i]->len*sizeof(char *));
       if (!bucket[i]->sa) {
         fprintf(stderr, "fillBuckets: Failed to allocate suffix array for bucket %d (size=%ld)\n",
                 i, bucket[i]->len);
+        fprintf(stderr, "  Required memory: %zu bytes (%.2f MB)\n", 
+                bucket[i]->len * sizeof(char *),
+                (double)(bucket[i]->len * sizeof(char *)) / (1024.0 * 1024.0));
+        fprintf(stderr, "\nSuggestion: Try using -m flag for memory-efficient mode\n");
         exit(1);
       }
     }
@@ -769,10 +841,44 @@ static void SortSeqs(SEQstruct *ss, suffixArray *s) {
   int i, nseq = s->nseq;
   SEQstruct **ssarray, *cur;
 
+  /* Check for overflow before allocation */
+  if (check_mult_overflow(nseq, sizeof(SEQstruct*)) ||
+      check_mult_overflow(nseq, sizeof(char*)) ||
+      check_mult_overflow(nseq, sizeof(IndexType)) ||
+      check_mult_overflow(nseq, sizeof(int))) {
+    fprintf(stderr, "SortSeqs: Overflow detected when calculating allocation sizes for nseq=%d\n", nseq);
+    exit(1);
+  }
+
   ssarray = (SEQstruct **)malloc(nseq*sizeof(SEQstruct*));
+  if (!ssarray) {
+    fprintf(stderr, "SortSeqs: Failed to allocate ssarray for %d sequences\n", nseq);
+    exit(1);
+  }
+  
   s->ids = (char **)malloc(nseq*sizeof(char*));
+  if (!s->ids) {
+    fprintf(stderr, "SortSeqs: Failed to allocate ids array for %d sequences\n", nseq);
+    free(ssarray);
+    exit(1);
+  }
+  
   s->seqlengths = (IndexType *)malloc(nseq*sizeof(IndexType));
+  if (!s->seqlengths) {
+    fprintf(stderr, "SortSeqs: Failed to allocate seqlengths array for %d sequences\n", nseq);
+    free(ssarray);
+    free(s->ids);
+    exit(1);
+  }
+  
   s->seqTermOrder = (int *)malloc(nseq*sizeof(int));
+  if (!s->seqTermOrder) {
+    fprintf(stderr, "SortSeqs: Failed to allocate seqTermOrder array for %d sequences\n", nseq);
+    free(ssarray);
+    free(s->ids);
+    free(s->seqlengths);
+    exit(1);
+  }
 
   cur = ss->next;
   for (i=0; i<nseq; ++i) { ssarray[i]=cur; cur=cur->next; }
