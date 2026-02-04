@@ -1231,7 +1231,6 @@ int main(int argc, char **argv) {
   if (memEfficient) {
     /* In memory-efficient mode, adaptively set nfill based on bucket sizes */
     long max_bucket_size = 0;
-    long total_size = 0;
     int i;
     
     /* Find largest bucket to estimate memory impact */
@@ -1239,7 +1238,6 @@ int main(int argc, char **argv) {
       if (wbs->bucket_size[i] > max_bucket_size) {
         max_bucket_size = wbs->bucket_size[i];
       }
-      total_size += wbs->bucket_size[i];
     }
     
     /* Calculate estimated memory per bucket in MB */
@@ -1252,12 +1250,12 @@ int main(int argc, char **argv) {
       /* Ultra-large database (>100GB): minimize concurrent buckets */
       wbs->nfill = MIN_NFILL;
       fprintf(stderr,"Ultra-large database detected (%.1f GB)\n", seq_size_mb / 1024.0);
-      fprintf(stderr,"Using ultra-conservative memory mode: filling %d bucket at a time\n", wbs->nfill);
+      fprintf(stderr,"Using ultra-conservative memory mode: filling %d bucket(s) at a time\n", wbs->nfill);
     } else if (mb_per_bucket * nThreads > 1000) {
       /* Large buckets: use very conservative approach */
       wbs->nfill = MIN_NFILL;
       fprintf(stderr,"Large buckets detected (%.1f MB per bucket)\n", mb_per_bucket);
-      fprintf(stderr,"Memory-efficient mode: filling %d bucket at a time\n", wbs->nfill);
+      fprintf(stderr,"Memory-efficient mode: filling %d bucket(s) at a time\n", wbs->nfill);
     } else {
       /* Standard memory-efficient mode */
       wbs->nfill = 2 * nThreads;
