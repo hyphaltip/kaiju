@@ -37,14 +37,18 @@
   3. Controlled bucket filling: Only a limited number of buckets are filled at once
      (controlled by nfill parameter), preventing excessive memory usage.
      - Normal mode: nfill = min(nbuckets/20 + nThreads, 100)
-     - Memory-efficient mode (-m flag): nfill = 2 * nThreads
+     - Memory-efficient mode (-m flag): nfill adapts based on database size:
+       * Ultra-large databases (>100GB): nfill = 1 (one bucket at a time)
+       * Large buckets (>1GB per bucket): nfill = 1
+       * Standard cases: nfill = 2 * nThreads
   
   4. BWT buffer reuse: Each bucket's BWT buffer is allocated, used, and freed
      independently, avoiding large contiguous memory allocations.
   
-  For very large databases (hundreds of GB), use the -m (memory-efficient) flag to
+  For very large databases (hundreds of GB), ALWAYS use the -m (memory-efficient) flag to
   minimize peak memory usage at the cost of more passes over the sequence data.
-  This can reduce peak memory usage by an order of magnitude.
+  The adaptive memory mode can reduce peak memory usage by an order of magnitude or more
+  for extremely large databases.
 
 gcc -g -o sufSort -l pthread sufSort.c
 
@@ -106,6 +110,7 @@ int workerNum=0;
 /* Memory optimization constants */
 #define BYTES_PER_MB 1e6
 #define MAX_NFILL_NORMAL_MODE 100  /* Maximum concurrent buckets in normal mode */
+#define MIN_NFILL 1                /* Minimum buckets to fill at once (ultra-conservative) */
 
 
 /* Status flags */
@@ -467,12 +472,18 @@ void fillBuckets(BucketStack *bs, int istart, int m) {
       
       bucket[i]->sa = bucket[i]->cur = (char **)malloc(bucket[i]->len*sizeof(char *));
       if (!bucket[i]->sa) {
+        fprintf(stderr, "\n=== MEMORY ALLOCATION FAILURE ===\n");
         fprintf(stderr, "fillBuckets: Failed to allocate suffix array for bucket %d (size=%ld)\n",
                 i, bucket[i]->len);
         fprintf(stderr, "  Required memory: %zu bytes (%.2f MB)\n", 
                 bucket[i]->len * sizeof(char *),
                 (double)(bucket[i]->len * sizeof(char *)) / (1024.0 * 1024.0));
-        fprintf(stderr, "\nSuggestion: Try using -m flag for memory-efficient mode\n");
+        fprintf(stderr, "\nPossible solutions:\n");
+        fprintf(stderr, "  1. If not already using it, add -m flag for memory-efficient mode\n");
+        fprintf(stderr, "  2. Reduce number of threads with -n flag (currently using %d threads)\n", bs->nthreads);
+        fprintf(stderr, "  3. Run on a machine with more available memory\n");
+        fprintf(stderr, "  4. Split the input database into smaller parts\n");
+        fprintf(stderr, "=================================\n");
         exit(1);
       }
     }
@@ -1218,9 +1229,42 @@ int main(int argc, char **argv) {
    * For normal mode, use larger batches for better performance.
    */
   if (memEfficient) {
-    /* In memory-efficient mode, limit to 2*nThreads to minimize memory footprint */
-    wbs->nfill = 2 * nThreads;
-    fprintf(stderr,"Memory-efficient mode: filling %d buckets at a time\n", wbs->nfill);
+    /* In memory-efficient mode, adaptively set nfill based on bucket sizes */
+    long max_bucket_size = 0;
+    int i;
+    
+    /* Find largest bucket to estimate memory impact */
+    for (i = 0; i < wbs->nbuckets; i++) {
+      if (wbs->bucket_size[i] > max_bucket_size) {
+        max_bucket_size = wbs->bucket_size[i];
+      }
+    }
+    
+    /* Calculate estimated memory per bucket in MB */
+    double mb_per_bucket = (double)(max_bucket_size * sizeof(char *)) / (1024.0 * 1024.0);
+    
+    /* For very large databases (>100GB), be extremely conservative */
+    long seq_size_mb = (long)(ss->len / (1024.0 * 1024.0));
+    
+    if (seq_size_mb > 100000) {
+      /* Ultra-large database (>100GB): minimize concurrent buckets */
+      wbs->nfill = MIN_NFILL;
+      fprintf(stderr,"Ultra-large database detected (%.1f GB)\n", seq_size_mb / 1024.0);
+      fprintf(stderr,"Using ultra-conservative memory mode: filling %d bucket(s) at a time\n", wbs->nfill);
+    } else if (mb_per_bucket * nThreads > 1000) {
+      /* Large buckets: use very conservative approach */
+      wbs->nfill = MIN_NFILL;
+      fprintf(stderr,"Large buckets detected (%.1f MB per bucket)\n", mb_per_bucket);
+      fprintf(stderr,"Memory-efficient mode: filling %d bucket(s) at a time\n", wbs->nfill);
+    } else {
+      /* Standard memory-efficient mode */
+      wbs->nfill = 2 * nThreads;
+      fprintf(stderr,"Memory-efficient mode: filling %d buckets at a time\n", wbs->nfill);
+    }
+    
+    fprintf(stderr,"Estimated memory per bucket: %.1f MB\n", mb_per_bucket);
+    fprintf(stderr,"Estimated peak memory for suffix arrays: %.1f MB\n", 
+            mb_per_bucket * wbs->nfill);
   } else {
     /* Normal mode: balance between memory usage and performance */
     wbs->nfill = wbs->nbuckets/20 + nThreads;
