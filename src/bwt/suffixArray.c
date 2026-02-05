@@ -49,7 +49,7 @@ static inline void suffixArray_set_masks(suffixArray *s) {
 
 
 /* Encode long in n bytes (assumes that number can fit in n bytes) */
-static inline void long2uchar(long k, uchar *c, int n) {
+static inline void long2uchar(IndexType k, uchar *c, int n) {
   while ( n-- >0 ) { c[n] = k; k = k>>8; }
 }
 
@@ -67,7 +67,7 @@ static inline void suffixArray_encode_number(int nseq, long pos, uchar *code, su
 
 
 /* Returns the bits needed to encode a number (without using log2) */
-static int bitsNeeded(long k) { int i=0; while (k>>i) ++i; return i; }
+static int bitsNeeded(IndexType k) { int i=0; while (k>>i) ++i; return i; }
 
 
 
@@ -89,7 +89,7 @@ static int bitsNeeded(long k) { int i=0; while (k>>i) ++i; return i; }
 */
 void suffixArray_make_hash(SEQstruct *base, suffixArray *s, int Hstep) {
   SEQstruct *ss, **spt;
-  long i, limit;
+  IndexType i, limit;
 
   s->hash_step = Hstep;
   // The number of entries in hash table
@@ -103,7 +103,7 @@ void suffixArray_make_hash(SEQstruct *base, suffixArray *s, int Hstep) {
   // Walk through all sequences
   while (ss->next) {
     ss = ss->next;
-    limit = (long)(ss->start - s->seqstart) + ss->len;
+    limit = (IndexType)(ss->start - s->seqstart) + ss->len;
     while (i*s->hash_step <= limit) spt[i++] = ss;
   }
 }
@@ -114,12 +114,12 @@ void suffixArray_make_hash(SEQstruct *base, suffixArray *s, int Hstep) {
   Get pointer to sequence for a given position in concatenated string.
 */
 static SEQstruct *hash_lookupSeq(char *suffix, suffixArray *s) {
-  int i;
+  IndexType i;
   //long pos = (long)(suffix - s->seqstart);
   SEQstruct *ss;
 
   //i = pos/s->hash_step;
-  i = (long)(suffix - s->seqstart)/s->hash_step;
+  i = (IndexType)(suffix - s->seqstart)/s->hash_step;
   ss = s->hash[i];
   // while ( pos > ss->pos + ss->len ) ss=ss->next;
   while ( suffix > ss->start + ss->len ) ss=ss->next;
