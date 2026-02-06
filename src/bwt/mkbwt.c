@@ -615,7 +615,7 @@ static inline int checkHomoPol(char *s, int wlen) {
 
 /* Sorts a single bucket and return pointers to right location (-wlen) */
 void sortBucket(Bucket *b) {
-  int i, h;
+  long i, h;
 
   if (b->len==0) {b->status=SORTED; return; }
 
@@ -642,7 +642,7 @@ void sortBucket(Bucket *b) {
 
 /* Get the BWT for bucket (stores in bucket temporarily) */
 void bwtBucket(Bucket *b) {
-  int k;
+  long long k;
 
   if (b->len) {
     b->bwt = malloc(b->len);
@@ -672,7 +672,7 @@ static inline void free_sa(Bucket *b) {
 void bwtWriteBucket(Bucket *b, FILE *bwtfile) {
 #ifdef DEBUG2
   if (b->len && b->sa) {
-    int i;
+    long long i;
     for (i=0; i<b->len; ++i) {
       fprintf(stdout,"DEBUG2%8d %4d ", (int)(b->sa[i]-b->seq), b->wn );
       print_seq(b->seq, b->sa[i], 0, b->slen, DEBUG2, b->alphabet, b->alen, stdout);
